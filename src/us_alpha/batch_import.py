@@ -34,7 +34,14 @@ from .storage import AlphaDB
 
 
 def import_all_historical(db: AlphaDB):
-    """Import all historical records from the 2026-05-07 to 2026-05-10 sessions."""
+    """
+    Import all historical records from the 2026-05-07 to 2026-05-10 sessions.
+    Safe to call multiple times - checks if already imported before running.
+    """
+    existing = db._conn.execute("SELECT COUNT(*) as c FROM info_inbox").fetchone()["c"]
+    if existing >= 28:
+        return
+
     _import_macro_info(db)
     _import_ai_semi_info(db)
     _import_software_info(db)

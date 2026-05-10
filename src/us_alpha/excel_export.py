@@ -350,6 +350,117 @@ _SHEETS = {
             ("triggered_by", "觸發來源", 16),
         ],
     },
+    "相關性檢查": {
+        "table": "correlation_guard",
+        "columns": [
+            ("corr_id", "檢查ID", 16),
+            ("date", "日期", 12),
+            ("tickers_in_portfolio", "組合標的", 24),
+            ("same_sector_count", "同板塊數", 10),
+            ("max_correlation", "最高相關係數", 12),
+            ("same_catalyst_exposure", "同催化劑暴露", 20),
+            ("portfolio_beta", "組合Beta", 10),
+            ("concentration_verdict", "集中度判定", 14),
+            ("max_total_position", "最大總倉位", 12),
+        ],
+    },
+    "倉位計算": {
+        "table": "position_sizing",
+        "columns": [
+            ("sizing_id", "計算ID", 16),
+            ("ticker", "股票", 8),
+            ("date", "日期", 12),
+            ("account_value", "帳戶總值", 12),
+            ("risk_pct", "風險%", 8),
+            ("entry_price", "進場價", 10),
+            ("stop_loss", "停損", 10),
+            ("per_share_risk", "每股風險", 10),
+            ("calculated_shares", "計算股數", 10),
+            ("position_value", "倉位金額", 12),
+            ("account_pct", "佔帳戶%", 10),
+            ("trade_type", "交易類型", 14),
+            ("sizing_verdict", "倉位判定", 12),
+        ],
+    },
+    "禁止交易區": {
+        "table": "no_trade_zone",
+        "columns": [
+            ("ntz_id", "禁區ID", 16),
+            ("date", "日期", 12),
+            ("zone_type", "類型", 12),
+            ("reason", "原因", 30),
+            ("affected_tickers", "影響標的", 20),
+            ("start_date", "開始日", 12),
+            ("end_date", "結束日", 12),
+            ("is_active", "活躍", 6),
+        ],
+    },
+    "偏誤檢查": {
+        "table": "bias_check",
+        "columns": [
+            ("bias_id", "檢查ID", 16),
+            ("ticker", "股票", 8),
+            ("date", "日期", 12),
+            ("is_already_held", "已持倉", 8),
+            ("held_position_bias_deduction", "持倉扣分", 10),
+            ("all_info_bullish", "全部利多", 10),
+            ("excessive_consensus_warning", "過度一致", 10),
+            ("social_unanimity", "社群一致", 10),
+            ("media_hype", "媒體炒作", 10),
+            ("counter_thesis_provided", "有反方論述", 10),
+            ("bias_verdict", "偏誤判定", 12),
+        ],
+    },
+    "決策疲勞": {
+        "table": "fatigue_guard",
+        "columns": [
+            ("fatigue_id", "疲勞ID", 16),
+            ("date", "日期", 12),
+            ("recs_today", "今日推薦數", 10),
+            ("max_recs_allowed", "上限", 6),
+            ("consecutive_losses", "連續虧損", 10),
+            ("losses_today", "今日虧損數", 10),
+            ("is_cooled_down", "冷卻中", 8),
+            ("fatigue_verdict", "疲勞判定", 12),
+            ("allowed_grade", "允許等級", 10),
+        ],
+    },
+    "勝率儀表板": {
+        "table": "win_rate_dashboard",
+        "columns": [
+            ("snapshot_date", "快照日期", 12),
+            ("total_recs", "總推薦", 8),
+            ("wins", "勝利", 8),
+            ("partial", "部分", 8),
+            ("losses", "虧損", 8),
+            ("win_rate", "勝率%", 8),
+            ("t1_hit_rate", "T1命中%", 10),
+            ("t2_hit_rate", "T2命中%", 10),
+            ("stop_loss_rate", "停損率%", 10),
+            ("avg_return", "平均報酬%", 10),
+            ("avg_mfe", "平均MFE%", 10),
+            ("avg_mae", "平均MAE%", 10),
+            ("profit_factor", "賺賠比", 8),
+            ("best_strategy", "最佳策略", 16),
+            ("best_sector", "最佳板塊", 16),
+            ("sample_size_sufficient", "樣本充足", 10),
+        ],
+    },
+    "觀察名單結果": {
+        "table": "watchlist_outcome",
+        "columns": [
+            ("watch_id", "觀察ID", 16),
+            ("ticker", "股票", 8),
+            ("original_date", "原始日期", 12),
+            ("outcome_date", "結果日期", 12),
+            ("outcome", "結果", 12),
+            ("converted_to_rec", "轉推薦", 8),
+            ("rec_id", "推薦ID", 16),
+            ("missed_opportunity", "錯過", 8),
+            ("missed_gain_pct", "錯過漲幅%", 10),
+            ("false_negative", "偽陰性", 8),
+        ],
+    },
     "環境記憶": {
         "table": "regime_memory",
         "columns": [
@@ -504,10 +615,10 @@ def _write_summary_sheet(ws, db: AlphaDB):
     note_font = Font(name="Microsoft JhengHei", size=9, italic=True, color="666666")
 
     row = 1
-    ws.cell(row=row, column=1, value="美股高報酬交易決策系統 v2.2").font = title_font
+    ws.cell(row=row, column=1, value="美股高報酬交易決策系統 v2.5").font = title_font
     row += 1
     ws.cell(row=row, column=1, value=f"匯出時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}").font = note_font
-    ws.cell(row=row, column=3, value="HIGH_ALPHA_LAUNCHPAD_US_v2.2 | TIMING + EXIT + TRADE_PLAN").font = note_font
+    ws.cell(row=row, column=3, value="HIGH_ALPHA_LAUNCHPAD_US_v2.5 | TIMING + EXIT + CORRELATION + BIAS + WIN_RATE").font = note_font
     row += 2
 
     # Section 1: System Status
@@ -518,20 +629,27 @@ def _write_summary_sheet(ws, db: AlphaDB):
     counts = db.get_table_counts()
     table_names_zh = {
         "info_inbox": "資訊收錄",
-        "market_gate": "市場環境紀錄",
-        "sector_rank": "板塊評分紀錄",
-        "catalyst_calendar": "催化劑追蹤",
+        "market_gate": "市場環境",
+        "sector_rank": "板塊評分",
+        "catalyst_calendar": "催化劑",
         "score_audit": "評分審計",
         "formal_rec": "正式推薦",
-        "watchlist": "觀察名單（活躍）",
-        "exclusion": "排除名單",
-        "holding": "持倉動作歷史",
+        "watchlist": "觀察名單",
+        "exclusion": "排除/封鎖",
+        "holding": "持倉歷史",
         "holding_current": "當前持倉",
         "postmortem": "復盤紀錄",
         "model_change": "模型修正",
         "trade_plan": "交易計畫",
-        "timing_gate": "時間閘門紀錄",
+        "timing_gate": "時間閘門",
         "exit_plan": "出場計畫",
+        "correlation_guard": "相關性檢查",
+        "position_sizing": "倉位計算",
+        "no_trade_zone": "禁止交易區",
+        "bias_check": "偏誤檢查",
+        "fatigue_guard": "決策疲勞",
+        "win_rate_dashboard": "勝率儀表板",
+        "watchlist_outcome": "觀察結果追蹤",
         "regime_memory": "環境記憶",
     }
 
@@ -545,19 +663,23 @@ def _write_summary_sheet(ws, db: AlphaDB):
             cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
         row += 1
 
-    # v2.2 compliance checks on right side
+    # v2.5 compliance checks on right side
     row = start_row
     v22_checks = [
-        ("TIMING_ENGINE 啟用", counts.get("timing_gate", 0) > 0),
-        ("EXIT_ENGINE 啟用", counts.get("exit_plan", 0) > 0),
-        ("TRADE_PLAN 完整", counts.get("trade_plan", 0) > 0),
-        ("INFO_GATE 運作中", counts.get("info_inbox", 0) > 0),
-        ("MARKET_GATE 運作中", counts.get("market_gate", 0) > 0),
-        ("SECTOR_RANK 運作中", counts.get("sector_rank", 0) > 0),
-        ("RISK_LOCK 運作中", counts.get("exclusion", 0) > 0),
-        ("SCORE_ENGINE 運作中", counts.get("score_audit", 0) > 0),
-        ("REC_ENGINE 就緒", True),
-        ("POSTMORTEM 就緒", True),
+        ("v2.1 INFO_GATE", counts.get("info_inbox", 0) > 0),
+        ("v2.1 MARKET_GATE", counts.get("market_gate", 0) > 0),
+        ("v2.1 SECTOR_RANK", counts.get("sector_rank", 0) > 0),
+        ("v2.1 RISK_LOCK", counts.get("exclusion", 0) > 0),
+        ("v2.2 TIMING_ENGINE", counts.get("timing_gate", 0) > 0),
+        ("v2.2 EXIT_ENGINE", counts.get("exit_plan", 0) > 0),
+        ("v2.2 TRADE_PLAN", counts.get("trade_plan", 0) > 0),
+        ("v2.3 CORRELATION_GUARD", counts.get("correlation_guard", 0) > 0),
+        ("v2.3 POSITION_SIZING", counts.get("position_sizing", 0) > 0),
+        ("v2.4 BIAS_FILTER", counts.get("bias_check", 0) > 0),
+        ("v2.4 FATIGUE_GUARD", counts.get("fatigue_guard", 0) > 0),
+        ("v2.5 WIN_RATE_DASHBOARD", counts.get("win_rate_dashboard", 0) > 0),
+        ("v2.5 WATCHLIST_OUTCOME", counts.get("watchlist_outcome", 0) > 0),
+        ("v2.5 REGIME_MEMORY", counts.get("regime_memory", 0) > 0),
     ]
     for label, ok in v22_checks:
         ws.cell(row=row, column=4, value=label).font = data_font
@@ -614,19 +736,21 @@ def _write_summary_sheet(ws, db: AlphaDB):
     row += 2
 
     # Section 3: System Rules
-    ws.cell(row=row, column=1, value="v2.2 核心紀律").font = section_font
+    ws.cell(row=row, column=1, value="v2.5 核心紀律").font = section_font
     row += 1
     rules = [
         "1. 沒有 TIMING_GATE 通過，不可建立 REC",
         "2. 沒有 EXIT_PLAN，不可建立 REC",
-        "3. 沒有完整 TRADE_PLAN，不可建立 REC",
+        "3. 沒有完整 TRADE_PLAN（含反方論述），不可建立 REC",
         "4. RR < 2.5:1 不主推",
         "5. SEC 未通過直接封鎖",
         "6. S3 過熱不追",
-        "7. 每日最多 3 支主推",
-        "8. 反方論述必填",
-        "9. 寧可不推薦也不硬推",
-        "10. 每筆推薦都要可復盤",
+        "7. 每日最多 3 支主推（FATIGUE_GUARD）",
+        "8. 同板塊不超過 2 支主推（CORRELATION_GUARD）",
+        "9. 已持倉重新評分自動扣 5 分（BIAS_FILTER）",
+        "10. 2 連虧只做 A 級；3 連虧暫停",
+        "11. 寧可不推薦也不硬推",
+        "12. 每筆推薦都要可復盤、可追蹤 ID 鏈",
     ]
     for rule in rules:
         ws.cell(row=row, column=1, value=rule).font = data_font

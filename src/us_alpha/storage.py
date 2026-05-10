@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS info_inbox (
 
 CREATE TABLE IF NOT EXISTS market_gate (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
+    mkt_id TEXT UNIQUE,
+    date TEXT NOT NULL UNIQUE,
     market_state TEXT NOT NULL,
     spy_trend TEXT,
     qqq_trend TEXT,
@@ -103,13 +104,15 @@ CREATE TABLE IF NOT EXISTS market_gate (
 
 CREATE TABLE IF NOT EXISTS sector_rank (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sector_id TEXT UNIQUE,
     date TEXT NOT NULL,
     sector_name TEXT NOT NULL,
     total_score INTEGER,
     grade TEXT,
     representative_tickers TEXT,
     full_json TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(date, sector_name)
 );
 
 CREATE TABLE IF NOT EXISTS catalyst_calendar (
@@ -181,13 +184,15 @@ CREATE TABLE IF NOT EXISTS watchlist (
 
 CREATE TABLE IF NOT EXISTS exclusion (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exclusion_id TEXT UNIQUE,
     ticker TEXT NOT NULL,
     date TEXT NOT NULL,
     reason TEXT NOT NULL,
     category TEXT,
     duration TEXT,
     full_json TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(ticker, date, category)
 );
 
 CREATE TABLE IF NOT EXISTS holding (
@@ -417,6 +422,134 @@ CREATE TABLE IF NOT EXISTS regime_memory (
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+-- v2.3: CORRELATION_GUARD
+CREATE TABLE IF NOT EXISTS correlation_guard (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    corr_id TEXT UNIQUE,
+    date TEXT NOT NULL,
+    tickers_in_portfolio TEXT,
+    same_sector_count INTEGER,
+    max_correlation REAL,
+    same_catalyst_exposure TEXT,
+    portfolio_beta REAL,
+    concentration_verdict TEXT,
+    max_total_position TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.3: POSITION_SIZING
+CREATE TABLE IF NOT EXISTS position_sizing (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sizing_id TEXT UNIQUE,
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    account_value REAL,
+    risk_pct REAL,
+    entry_price REAL,
+    stop_loss REAL,
+    per_share_risk REAL,
+    calculated_shares INTEGER,
+    position_value REAL,
+    account_pct REAL,
+    trade_type TEXT,
+    sizing_verdict TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.3: NO_TRADE_ZONE
+CREATE TABLE IF NOT EXISTS no_trade_zone (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ntz_id TEXT UNIQUE,
+    date TEXT NOT NULL,
+    zone_type TEXT,
+    reason TEXT,
+    affected_tickers TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.4: CONFIRMATION_BIAS_CHECK
+CREATE TABLE IF NOT EXISTS bias_check (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bias_id TEXT UNIQUE,
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    is_already_held INTEGER DEFAULT 0,
+    held_position_bias_deduction INTEGER DEFAULT 0,
+    all_info_bullish INTEGER DEFAULT 0,
+    excessive_consensus_warning INTEGER DEFAULT 0,
+    social_unanimity INTEGER DEFAULT 0,
+    media_hype INTEGER DEFAULT 0,
+    counter_thesis_provided INTEGER DEFAULT 0,
+    bias_verdict TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.4: DECISION_FATIGUE_GUARD
+CREATE TABLE IF NOT EXISTS fatigue_guard (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fatigue_id TEXT UNIQUE,
+    date TEXT NOT NULL UNIQUE,
+    recs_today INTEGER DEFAULT 0,
+    max_recs_allowed INTEGER DEFAULT 3,
+    consecutive_losses INTEGER DEFAULT 0,
+    last_stop_loss_time TEXT,
+    hours_since_stop INTEGER,
+    same_sector_block TEXT,
+    losses_today INTEGER DEFAULT 0,
+    is_cooled_down INTEGER DEFAULT 0,
+    fatigue_verdict TEXT,
+    allowed_grade TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.5: WIN_RATE_DASHBOARD
+CREATE TABLE IF NOT EXISTS win_rate_dashboard (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL UNIQUE,
+    total_recs INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    partial INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    win_rate REAL,
+    t1_hit_rate REAL,
+    t2_hit_rate REAL,
+    stop_loss_rate REAL,
+    avg_return REAL,
+    avg_mfe REAL,
+    avg_mae REAL,
+    profit_factor REAL,
+    best_strategy TEXT,
+    best_sector TEXT,
+    best_market_state TEXT,
+    worst_error_type TEXT,
+    sample_size_sufficient INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- v2.5: WATCHLIST_OUTCOME_TRACKER
+CREATE TABLE IF NOT EXISTS watchlist_outcome (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    watch_id TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    original_date TEXT,
+    outcome_date TEXT,
+    outcome TEXT,
+    converted_to_rec INTEGER DEFAULT 0,
+    rec_id TEXT,
+    missed_opportunity INTEGER DEFAULT 0,
+    missed_gain_pct REAL,
+    false_negative INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_info_date ON info_inbox(timestamp);
 CREATE INDEX IF NOT EXISTS idx_info_ticker ON info_inbox(tickers);
 CREATE INDEX IF NOT EXISTS idx_market_date ON market_gate(date);
@@ -433,6 +566,11 @@ CREATE INDEX IF NOT EXISTS idx_timing_ticker ON timing_gate(ticker);
 CREATE INDEX IF NOT EXISTS idx_timing_date ON timing_gate(date);
 CREATE INDEX IF NOT EXISTS idx_exit_ticker ON exit_plan(ticker);
 CREATE INDEX IF NOT EXISTS idx_exit_rec ON exit_plan(rec_id);
+CREATE INDEX IF NOT EXISTS idx_corr_date ON correlation_guard(date);
+CREATE INDEX IF NOT EXISTS idx_sizing_ticker ON position_sizing(ticker);
+CREATE INDEX IF NOT EXISTS idx_bias_ticker ON bias_check(ticker);
+CREATE INDEX IF NOT EXISTS idx_winrate_date ON win_rate_dashboard(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_watch_outcome ON watchlist_outcome(watch_id);
 """
 
 
@@ -496,13 +634,15 @@ class AlphaDB:
         return cur.lastrowid
 
     def save_market_gate(self, entry: MarketGateEntry) -> int:
-        """Save a MARKET_GATE entry."""
+        """Save a MARKET_GATE entry (one per date, no duplicates)."""
+        mkt_id = f"MKT-{entry.date}"
         cur = self._conn.execute(
-            """INSERT INTO market_gate
-            (date, market_state, spy_trend, qqq_trend, iwm_trend, smh_trend,
+            """INSERT OR IGNORE INTO market_gate
+            (mkt_id, date, market_state, spy_trend, qqq_trend, iwm_trend, smh_trend,
              vix_level, us10y_yield, notes, full_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                mkt_id,
                 str(entry.date),
                 entry.market_state.value,
                 entry.spy_trend,
@@ -519,12 +659,14 @@ class AlphaDB:
         return cur.lastrowid
 
     def save_sector_rank(self, entry: SectorRankEntry) -> int:
-        """Save a SECTOR_RANK entry."""
+        """Save a SECTOR_RANK entry (one per date+sector, no duplicates)."""
+        sector_id = f"SEC-{entry.date}-{entry.sector_name[:10]}"
         cur = self._conn.execute(
-            """INSERT INTO sector_rank
-            (date, sector_name, total_score, grade, representative_tickers, full_json)
-            VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT OR IGNORE INTO sector_rank
+            (sector_id, date, sector_name, total_score, grade, representative_tickers, full_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
+                sector_id,
                 str(entry.date),
                 entry.sector_name,
                 entry.total_score,
@@ -637,12 +779,14 @@ class AlphaDB:
         return cur.lastrowid
 
     def save_exclusion(self, entry: ExclusionEntry) -> int:
-        """Save an EXCLUSION entry."""
+        """Save an EXCLUSION entry (no duplicates per ticker+date+category)."""
+        excl_id = f"EXCL-{entry.date}-{entry.ticker}"
         cur = self._conn.execute(
-            """INSERT INTO exclusion
-            (ticker, date, reason, category, duration, full_json)
-            VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT OR IGNORE INTO exclusion
+            (exclusion_id, ticker, date, reason, category, duration, full_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
+                excl_id,
                 entry.ticker,
                 str(entry.date),
                 entry.reason,
@@ -1063,7 +1207,10 @@ class AlphaDB:
             "info_inbox", "market_gate", "sector_rank", "catalyst_calendar",
             "score_audit", "formal_rec", "watchlist", "exclusion",
             "holding", "holding_current", "postmortem", "model_change",
-            "trade_plan", "timing_gate", "exit_plan", "regime_memory",
+            "trade_plan", "timing_gate", "exit_plan",
+            "correlation_guard", "position_sizing", "no_trade_zone",
+            "bias_check", "fatigue_guard", "win_rate_dashboard",
+            "watchlist_outcome", "regime_memory",
         ]
         counts = {}
         for table in tables:
