@@ -206,6 +206,31 @@ class FutuPriority(int, Enum):
 # ─── Data Models ──────────────────────────────────────────────────────────────
 
 
+class TimingState(str, Enum):
+    """Timing gate state (v2.2)."""
+
+    T0_CLEAR = "T0_clear"  # No event conflict, fully clear
+    T1_CAUTION = "T1_caution"  # FOMC/OPEX week, reduce beta
+    T2_RESTRICTED = "T2_restricted"  # CPI/NFP imminent, no new high-vol
+    T3_EARNINGS_ZONE = "T3_earnings_zone"  # Within 3 days of earnings
+    T4_EVENT_LOCKOUT = "T4_event_lockout"  # 0-2 days to catalyst
+    T5_POST_EVENT = "T5_post_event"  # Event just occurred, judge reaction
+
+
+class ExitTrigger(str, Enum):
+    """Exit trigger type (v2.2)."""
+
+    STOP_LOSS = "stop_loss"
+    TIME_STOP = "time_stop"
+    T1_HIT = "t1_hit"
+    T2_HIT = "t2_hit"
+    TRAILING_STOP = "trailing_stop"
+    CATALYST_FAIL = "catalyst_fail"  # 利多出盡
+    STRUCTURE_BREAK = "structure_break"  # 跌破20EMA+量增
+    VWAP_BREAK = "vwap_break"
+    MANUAL = "manual"
+
+
 class InfoInboxEntry(BaseModel):
     """INFO_INBOX_LOG: Raw information input."""
 
@@ -218,6 +243,9 @@ class InfoInboxEntry(BaseModel):
     impact_timeframe: Optional[str] = None  # 1d/1w/1m/1q
     needs_verification: bool = True
     enters_scoring: Optional[bool] = None
+    enters_market_gate: Optional[bool] = None
+    enters_risk_lock: Optional[bool] = None
+    enters_sector_rank: Optional[bool] = None
     source_grade: SourceGrade = SourceGrade.UNKNOWN
     affected_module: Optional[str] = None
     conclusion: InfoConclusion = InfoConclusion.OBSERVE
@@ -390,17 +418,68 @@ class HoldingEntry(BaseModel):
     avg_cost: Optional[float] = None
     current_price: Optional[float] = None
     shares: Optional[int] = None
+    position_value: Optional[float] = None
     pnl_pct: Optional[float] = None
     pnl_amount: Optional[float] = None
+    linked_rec_id: Optional[str] = None
+    linked_score_id: Optional[str] = None
+    original_buy_reason: Optional[str] = None
     key_support: Optional[float] = None
     alert_price: Optional[float] = None
     invalidation_price: Optional[float] = None
+    stop_loss: Optional[float] = None
     target_1: Optional[float] = None
     target_2: Optional[float] = None
     can_add: Optional[str] = None  # yes/no/conditional
+    add_condition: Optional[str] = None
+    holding_days: Optional[int] = None
     market_impact: Optional[str] = None
     sector_impact: Optional[str] = None
     original_thesis_valid: bool = True
+    next_action: Optional[str] = None  # hold/reduce/exit/add/watch
+    notes: Optional[str] = None
+
+
+class TimingGateEntry(BaseModel):
+    """TIMING_GATE_LOG: Time dimension check (v2.2)."""
+
+    ticker: str
+    date: date
+    timing_state: TimingState = TimingState.T0_CLEAR
+    earnings_date: Optional[str] = None
+    days_to_earnings: Optional[int] = None
+    catalyst_date: Optional[str] = None
+    days_to_catalyst: Optional[int] = None
+    is_fomc_week: bool = False
+    is_opex_week: bool = False
+    is_cpi_nfp_week: bool = False
+    is_earnings_season: bool = False
+    timing_passed: bool = True
+    timing_action: Optional[str] = None  # clear/reduce/delay/block
+    notes: Optional[str] = None
+
+
+class ExitPlanEntry(BaseModel):
+    """EXIT_PLAN_LOG: Exit strategy record (v2.2)."""
+
+    ticker: str
+    rec_id: Optional[str] = None
+    date: date
+    entry_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    trailing_stop_rule: Optional[str] = None
+    target_1: Optional[float] = None
+    t1_exit_pct: str = "1/3"
+    target_2: Optional[float] = None
+    t2_exit_pct: str = "1/3"
+    remainder_rule: Optional[str] = None  # e.g. "track 20EMA"
+    time_stop_days: int = 10
+    catalyst_fail_rule: Optional[str] = None
+    structure_break_rule: Optional[str] = None
+    profit_lock_rules: Optional[str] = None  # +5%->保本, +10%->+3%, etc
+    actual_exit_trigger: Optional[ExitTrigger] = None
+    actual_exit_price: Optional[float] = None
+    actual_exit_date: Optional[date] = None
     notes: Optional[str] = None
 
 

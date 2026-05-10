@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS info_inbox (
     source_grade TEXT,
     initial_direction TEXT,
     enters_scoring INTEGER,
+    enters_market_gate INTEGER,
+    enters_risk_lock INTEGER,
+    enters_sector_rank INTEGER,
     conclusion TEXT,
     raw_content TEXT,
     full_json TEXT NOT NULL,
@@ -194,9 +197,67 @@ CREATE TABLE IF NOT EXISTS holding (
     action TEXT NOT NULL,
     avg_cost REAL,
     current_price REAL,
+    shares INTEGER,
+    position_value REAL,
     pnl_pct REAL,
+    linked_rec_id TEXT,
+    original_buy_reason TEXT,
+    alert_price REAL,
+    invalidation_price REAL,
+    stop_loss REAL,
+    target_1 REAL,
+    target_2 REAL,
+    can_add TEXT,
+    add_condition TEXT,
+    holding_days INTEGER,
     original_thesis_valid INTEGER DEFAULT 1,
+    next_action TEXT,
     full_json TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS timing_gate (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    timing_state TEXT DEFAULT 'T0_clear',
+    earnings_date TEXT,
+    days_to_earnings INTEGER,
+    catalyst_date TEXT,
+    days_to_catalyst INTEGER,
+    is_fomc_week INTEGER DEFAULT 0,
+    is_opex_week INTEGER DEFAULT 0,
+    is_cpi_nfp_week INTEGER DEFAULT 0,
+    is_earnings_season INTEGER DEFAULT 0,
+    timing_passed INTEGER DEFAULT 1,
+    timing_action TEXT,
+    notes TEXT,
+    full_json TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS exit_plan (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    rec_id TEXT,
+    date TEXT NOT NULL,
+    entry_price REAL,
+    stop_loss REAL,
+    trailing_stop_rule TEXT,
+    target_1 REAL,
+    t1_exit_pct TEXT DEFAULT '1/3',
+    target_2 REAL,
+    t2_exit_pct TEXT DEFAULT '1/3',
+    remainder_rule TEXT,
+    time_stop_days INTEGER DEFAULT 10,
+    catalyst_fail_rule TEXT,
+    structure_break_rule TEXT,
+    profit_lock_rules TEXT,
+    actual_exit_trigger TEXT,
+    actual_exit_price REAL,
+    actual_exit_date TEXT,
+    notes TEXT,
+    full_json TEXT,
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -276,6 +337,10 @@ CREATE INDEX IF NOT EXISTS idx_watch_ticker ON watchlist(ticker);
 CREATE INDEX IF NOT EXISTS idx_holding_ticker ON holding(ticker);
 CREATE INDEX IF NOT EXISTS idx_postmortem_rec ON postmortem(rec_id);
 CREATE INDEX IF NOT EXISTS idx_trade_plan_ticker ON trade_plan(ticker);
+CREATE INDEX IF NOT EXISTS idx_timing_ticker ON timing_gate(ticker);
+CREATE INDEX IF NOT EXISTS idx_timing_date ON timing_gate(date);
+CREATE INDEX IF NOT EXISTS idx_exit_ticker ON exit_plan(ticker);
+CREATE INDEX IF NOT EXISTS idx_exit_rec ON exit_plan(rec_id);
 """
 
 
@@ -501,17 +566,99 @@ class AlphaDB:
         """Save a HOLDING entry."""
         cur = self._conn.execute(
             """INSERT INTO holding
-            (ticker, timestamp, action, avg_cost, current_price, pnl_pct,
-             original_thesis_valid, full_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ticker, timestamp, action, avg_cost, current_price, shares,
+             position_value, pnl_pct, linked_rec_id, original_buy_reason,
+             alert_price, invalidation_price, stop_loss, target_1, target_2,
+             can_add, add_condition, holding_days, original_thesis_valid,
+             next_action, full_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry.ticker,
                 entry.timestamp.isoformat(),
                 entry.action.value,
                 entry.avg_cost,
                 entry.current_price,
+                entry.shares,
+                entry.position_value,
                 entry.pnl_pct,
+                entry.linked_rec_id,
+                entry.original_buy_reason,
+                entry.alert_price,
+                entry.invalidation_price,
+                entry.stop_loss,
+                entry.target_1,
+                entry.target_2,
+                entry.can_add,
+                entry.add_condition,
+                entry.holding_days,
                 1 if entry.original_thesis_valid else 0,
+                entry.next_action,
+                _serialize(entry),
+            ),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def save_timing_gate(self, entry) -> int:
+        """Save a TIMING_GATE entry (v2.2)."""
+        cur = self._conn.execute(
+            """INSERT INTO timing_gate
+            (ticker, date, timing_state, earnings_date, days_to_earnings,
+             catalyst_date, days_to_catalyst, is_fomc_week, is_opex_week,
+             is_cpi_nfp_week, is_earnings_season, timing_passed, timing_action,
+             notes, full_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.ticker,
+                str(entry.date),
+                entry.timing_state.value if hasattr(entry.timing_state, 'value') else entry.timing_state,
+                entry.earnings_date,
+                entry.days_to_earnings,
+                entry.catalyst_date,
+                entry.days_to_catalyst,
+                1 if entry.is_fomc_week else 0,
+                1 if entry.is_opex_week else 0,
+                1 if entry.is_cpi_nfp_week else 0,
+                1 if entry.is_earnings_season else 0,
+                1 if entry.timing_passed else 0,
+                entry.timing_action,
+                entry.notes,
+                _serialize(entry),
+            ),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def save_exit_plan(self, entry) -> int:
+        """Save an EXIT_PLAN entry (v2.2)."""
+        cur = self._conn.execute(
+            """INSERT INTO exit_plan
+            (ticker, rec_id, date, entry_price, stop_loss, trailing_stop_rule,
+             target_1, t1_exit_pct, target_2, t2_exit_pct, remainder_rule,
+             time_stop_days, catalyst_fail_rule, structure_break_rule,
+             profit_lock_rules, actual_exit_trigger, actual_exit_price,
+             actual_exit_date, notes, full_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.ticker,
+                entry.rec_id,
+                str(entry.date),
+                entry.entry_price,
+                entry.stop_loss,
+                entry.trailing_stop_rule,
+                entry.target_1,
+                entry.t1_exit_pct,
+                entry.target_2,
+                entry.t2_exit_pct,
+                entry.remainder_rule,
+                entry.time_stop_days,
+                entry.catalyst_fail_rule,
+                entry.structure_break_rule,
+                entry.profit_lock_rules,
+                entry.actual_exit_trigger.value if entry.actual_exit_trigger and hasattr(entry.actual_exit_trigger, 'value') else None,
+                entry.actual_exit_price,
+                str(entry.actual_exit_date) if entry.actual_exit_date else None,
+                entry.notes,
                 _serialize(entry),
             ),
         )
@@ -795,7 +942,8 @@ class AlphaDB:
         tables = [
             "info_inbox", "market_gate", "sector_rank", "catalyst_calendar",
             "score_audit", "formal_rec", "watchlist", "exclusion",
-            "holding", "postmortem", "model_change", "trade_plan", "regime_memory",
+            "holding", "postmortem", "model_change", "trade_plan",
+            "timing_gate", "exit_plan", "regime_memory",
         ]
         counts = {}
         for table in tables:
