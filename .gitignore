@@ -78,3 +78,10 @@ verify_*.py
 static/
 /apps/dsa-desktop/dist/
 /apps/dsa-desktop/node_modules/
+
+# US Alpha database files (local data, not versioned)
+*.db
+*.db-wal
+*.db-shm
+us_alpha_db/
+output/

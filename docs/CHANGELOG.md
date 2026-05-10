@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 补充 LLM 渠道编辑器的官方来源、依赖兼容窗口、保存时的运行时模型清理规则，以及旧配置回退路径说明。
 - [测试] 补齐 task_queue 运行时配置同步回归证据，明确 `tests/test_task_queue_config_sync.py` 作为本轮验收项。
 - [改进] Bot `/status` 展示统一 LLM 主模型、Agent 模型、渠道模式、YAML 配置和更多通知渠道状态。
+- [新功能] 新增美股高報酬選股與交易決策系統 (`src/us_alpha/`)：含 INFO_GATE、MARKET_GATE、SECTOR_RANK、STRATEGY_ROUTER、RISK_LOCK_ENGINE、SCORE_ENGINE、REC_ENGINE、POSTMORTEM_ENGINE 等完整模組。
+- [文档] 新增系統進化路線圖 (`docs/us-alpha-evolution-roadmap.md`)：定義 v2.2→v3.0 升級路線，含 TIMING_ENGINE、EXIT_ENGINE、TRADE_PLAN_TEMPLATE、CORRELATION_GUARD、POSITION_SIZING、CONFIRMATION_BIAS_FILTER、DECISION_FATIGUE_GUARD、WIN_RATE_DASHBOARD、WEIGHT_EVOLUTION、REGIME_MEMORY、MULTI_TIMEFRAME、SENTIMENT_GAUGE。
 
 ## [3.14.2] - 2026-04-30
 
