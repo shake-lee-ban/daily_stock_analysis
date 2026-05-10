@@ -855,6 +855,132 @@ def _add_data_validations(wb: Workbook):
             dv.add(f"{col_letter}2:{col_letter}1000")
 
 
+def _add_id_chain_sheet(wb: Workbook, db: AlphaDB):
+    """Add ID chain completeness check sheet."""
+    ws = wb.create_sheet(title="ID鏈檢查")
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["E"].width = 14
+    ws.column_dimensions["F"].width = 14
+    ws.column_dimensions["G"].width = 14
+    ws.column_dimensions["H"].width = 14
+    ws.column_dimensions["I"].width = 14
+    ws.column_dimensions["J"].width = 20
+
+    headers = ["股票", "INFO_ID", "SCORE_ID", "WATCH/REC_ID", "PLAN_ID",
+               "EXIT_ID", "TIMING_ID", "POSITION", "REVIEW_ID", "缺口"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = _HEADER_ALIGNMENT
+
+    tickers_sql = """
+        SELECT DISTINCT ticker FROM (
+            SELECT ticker FROM holding_current
+            UNION SELECT ticker FROM watchlist
+            UNION SELECT ticker FROM score_audit
+        )
+    """
+    tickers = [r["ticker"] for r in db._conn.execute(tickers_sql).fetchall()]
+
+    for row_idx, ticker in enumerate(tickers, 2):
+        ws.cell(row=row_idx, column=1, value=ticker)
+
+        info = db._conn.execute("SELECT info_id FROM info_inbox WHERE tickers LIKE ?", (f'%{ticker}%',)).fetchone()
+        ws.cell(row=row_idx, column=2, value=info["info_id"] if info else "✗")
+
+        score = db._conn.execute("SELECT score_id FROM score_audit WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=3, value=score["score_id"] if score else "✗")
+
+        watch = db._conn.execute("SELECT watch_id FROM watchlist WHERE ticker=?", (ticker,)).fetchone()
+        rec = db._conn.execute("SELECT rec_id FROM formal_rec WHERE ticker=?", (ticker,)).fetchone()
+        ref = (rec["rec_id"] if rec else watch["watch_id"] if watch else "✗")
+        ws.cell(row=row_idx, column=4, value=ref)
+
+        plan = db._conn.execute("SELECT id FROM trade_plan WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=5, value=f"PLAN-{plan['id']}" if plan else "✗")
+
+        exit_p = db._conn.execute("SELECT id FROM exit_plan WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=6, value=f"EXIT-{exit_p['id']}" if exit_p else "✗")
+
+        timing = db._conn.execute("SELECT id FROM timing_gate WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=7, value=f"TIME-{timing['id']}" if timing else "✗")
+
+        pos = db._conn.execute("SELECT status FROM holding_current WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=8, value=pos["status"] if pos else "✗")
+
+        review = db._conn.execute("SELECT id FROM postmortem WHERE ticker=?", (ticker,)).fetchone()
+        ws.cell(row=row_idx, column=9, value=f"REV-{review['id']}" if review else "✗(待)")
+
+        gaps = []
+        if not score:
+            gaps.append("SCORE")
+        if not rec and not watch:
+            gaps.append("REC/WATCH")
+        if not plan:
+            gaps.append("PLAN")
+        if not exit_p:
+            gaps.append("EXIT")
+        if not review:
+            gaps.append("REVIEW")
+        gap_str = ", ".join(gaps) if gaps else "✓ 完整"
+        cell = ws.cell(row=row_idx, column=10, value=gap_str)
+        if gaps:
+            cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+        else:
+            cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+
+    ws.freeze_panes = "A2"
+
+
+def _add_data_dictionary_sheet(wb: Workbook):
+    """Add data dictionary sheet for allowed values."""
+    ws = wb.create_sheet(title="資料字典")
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 40
+
+    headers = ["欄位名稱", "允許值", "說明"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+
+    dictionary = [
+        ("source_grade", "A1, A2, B, C, R, UNKNOWN", "A1=官方公告 A2=主流媒體 B=研報 C=社群 R=傳聞"),
+        ("market_state", "risk_on, selective_bull, neutral_range, risk_off, event_only", "市場環境判定"),
+        ("momentum_state", "S0-A, S0-B, S0-C, S1, S2, S3, S4", "爆發動能狀態機"),
+        ("timing_state", "T0_clear, T1_caution, T2_restricted, T3_earnings_zone, T4_event_lockout, T5_post_event", "時間閘門狀態"),
+        ("final_grade", "A, B, C, D, F, P", "A=主推 B=可推 C=觀察 D=不推 F=禁止 P=待查"),
+        ("risk_lock", "pass, warning, blocked", "風險封鎖狀態"),
+        ("rec_type", "primary, secondary, small_event, continuation", "推薦類型"),
+        ("position_risk", "standard, half, small, forbidden", "建議倉位水準"),
+        ("holding_action", "hold, add, reduce, stop_loss, wait", "持倉動作"),
+        ("next_action", "hold, add, reduce, exit, watch", "下一步建議"),
+        ("can_add", "yes, no, conditional", "是否允許加碼"),
+        ("exit_trigger", "stop_loss, time_stop, t1_hit, t2_hit, trailing_stop, catalyst_fail, structure_break, manual", "出場觸發類型"),
+        ("error_type", "info_error, timing_error, chasing_error, sector_misjudge, risk_underestimate, catalyst_miss, market_turn, technical_fail, liquidity_misjudge, sec_dilution", "復盤錯誤分類"),
+        ("review_period", "7d, 30d, 90d, 180d, 365d", "復盤週期"),
+        ("sector_grade", "A, B, C, WEAK", "A=85+ B=75-84 C=60-74 WEAK=<60"),
+        ("info_conclusion", "adopt, observe, isolate, exclude", "資訊處理結論"),
+        ("info_direction", "bullish, bearish, neutral, uncertain", "初步方向判斷"),
+        ("concentration_verdict", "pass, warning, blocked", "相關性集中度判定"),
+        ("bias_verdict", "clean, mild_bias, significant_bias, blocked", "確認偏誤判定"),
+        ("fatigue_verdict", "clear, caution, restricted, blocked", "決策疲勞判定"),
+        ("sample_guard", "insufficient(<20), borderline(20-30), sufficient(30+)", "樣本量是否足夠做模型調整"),
+    ]
+
+    for row_idx, (field, values, desc) in enumerate(dictionary, 2):
+        ws.cell(row=row_idx, column=1, value=field)
+        ws.cell(row=row_idx, column=2, value=values)
+        ws.cell(row=row_idx, column=3, value=desc)
+
+    ws.freeze_panes = "A2"
+
+
 def export_to_excel(db: Optional[AlphaDB] = None, output_path: Optional[str] = None) -> str:
     """
     Export all database tables to a formatted Excel workbook.
@@ -891,6 +1017,8 @@ def export_to_excel(db: Optional[AlphaDB] = None, output_path: Optional[str] = N
         _write_sheet(ws, rows_data, columns)
 
     _add_data_validations(wb)
+    _add_id_chain_sheet(wb, db)
+    _add_data_dictionary_sheet(wb)
 
     wb.save(str(path))
 

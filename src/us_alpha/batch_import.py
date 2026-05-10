@@ -55,6 +55,7 @@ def import_all_historical(db: AlphaDB):
     _import_watchlist(db)
     _import_exclusions(db)
     _import_model_changes(db)
+    _import_complete_id_chains(db)
 
 
 def _import_macro_info(db: AlphaDB):
@@ -545,3 +546,183 @@ def _import_model_changes(db: AlphaDB):
     ]
     for e in entries:
         db.save_model_change(e)
+
+
+def _import_complete_id_chains(db: AlphaDB):
+    """Build complete ID chains for CRSR and MIST."""
+    from .score_engine import ScoreInput, score_candidate, build_score_audit
+    from .schemas import (
+        FutuPriority, SectorGrade, StrategyVersion,
+        TimingGateEntry, TimingState, ExitPlanEntry,
+    )
+
+    # ─── CRSR: Complete chain ─────────────────────────────────────────────
+    # SCORE
+    from .risk_engine import run_full_risk_assessment
+    crsr_risk = run_full_risk_assessment(
+        "CRSR", avg_daily_volume_m=30, spread_pct=0.8, price=7.88,
+        daily_gain_pct=11.0, rsi=62, has_catalyst=True, rr_ratio=2.7,
+        revenue_growing=True, eps_improving=True,
+    )
+    crsr_input = ScoreInput(
+        ticker="CRSR",
+        strategy_version=StrategyVersion.HIGH_ALPHA_V2_1,
+        sector_grade=SectorGrade.C,
+        momentum_state=MomentumState.S1,
+        rs_rank=72,
+        above_50dma=True,
+        above_200dma=False,
+        near_support=True,
+        volume_confirmation=True,
+        has_catalyst=True,
+        catalyst_certainty="medium",
+        futu_priority=FutuPriority.P1,
+        earnings_beat=True,
+        revenue_growing=True,
+        source_grade=SourceGrade.B,
+        risk_assessment=crsr_risk,
+    )
+    crsr_score = score_candidate(crsr_input)
+    crsr_audit = build_score_audit(crsr_score, StrategyVersion.HIGH_ALPHA_V2_1,
+                                   linked_info_id="INFO-20260509-CRSR-001")
+    crsr_audit.score_id = "SCORE-20260509-CRSR-001"
+    db.save_score_audit(crsr_audit)
+
+    # WATCH (CRSR doesn't have formal REC yet, it's WATCH->monitoring)
+    crsr_watch = WatchlistEntry(
+        watch_id="WATCH-20260509-CRSR-001",
+        date=date(2026, 5, 9),
+        ticker="CRSR",
+        layer=CandidateLayer.STANDARD,
+        source_pool=FutuPoolSource.S1_B_WIDE,
+        watch_reason="S1-B/S2交叉確認，PC/Gaming輪動初期，已進場持有",
+        fail_reason="板塊整體C級，IWM弱，尚未breakout 8.20",
+        trigger_condition="突破8.20+放量=升級為REC",
+        invalidation_condition="跌破7.00=移除",
+        can_convert_to_rec=True,
+        next_check_date=date(2026, 5, 12),
+    )
+    db.save_watchlist(crsr_watch)
+
+    # TIMING
+    db.save_timing_gate(TimingGateEntry(
+        ticker="CRSR", date=date(2026, 5, 10),
+        timing_state=TimingState.T0_CLEAR,
+        timing_passed=True, timing_action="clear",
+        notes="無財報/FOMC/OPEX衝突，時間閘門通過",
+    ))
+
+    # EXIT PLAN
+    db.save_exit_plan(ExitPlanEntry(
+        ticker="CRSR", date=date(2026, 5, 10), rec_id=None,
+        entry_price=7.73, stop_loss=7.00,
+        trailing_stop_rule="+5%保本(8.12); +10%停損上移至成本+3%(7.96); +15%跟蹤10EMA",
+        target_1=8.20, t1_exit_pct="1/3",
+        target_2=9.00, t2_exit_pct="1/3",
+        remainder_rule="跟蹤10EMA，跌破即全出",
+        time_stop_days=10,
+        catalyst_fail_rule="10天內無法突破8.20=動能衰竭，減倉至50%",
+        structure_break_rule="跌破7.20+量增=波段結構失效，全部退出",
+        profit_lock_rules="+5%→保本; +10%→+3%; +15%→10EMA; +20%→前波段低點",
+    ))
+
+    # TRADE PLAN (full v2.5)
+    db.save_trade_plan("CRSR", {
+        "rec_id": None,
+        "strategy_version": "HIGH_ALPHA_LAUNCHPAD_US_v2.5",
+        "rec_type": "watch_to_hold",
+        "market_state": "selective_bull",
+        "sector_state": "Consumer Electronics C級(47/100)",
+        "entry_trigger": "回踩7.85支撐+縮量後放量確認",
+        "entry_method": "限價/回踩確認",
+        "entry_range": "7.73-7.88",
+        "no_chase_price": 8.10,
+        "stop_loss": 7.00,
+        "invalidation_condition": "跌破7.00=S1主升邏輯失效",
+        "time_stop_days": 10,
+        "target_1": 8.20,
+        "t1_exit_pct": "1/3",
+        "target_2": 9.00,
+        "t2_exit_pct": "1/3",
+        "remainder_rule": "跟蹤10EMA",
+        "trailing_stop_rule": "+5%保本; +10%上移至成本+3%; +15%跟10EMA",
+        "position_size": "120股 ($945)",
+        "max_risk_pct": 0.5,
+        "per_share_risk": 0.73,
+        "risk_reward_ratio": 2.7,
+        "catalyst": "PC/Gaming硬體輪動+S1-B/S2交叉+技術確認",
+        "catalyst_date": None,
+        "days_to_catalyst": None,
+        "pre_event_strategy": "N/A (非事件股)",
+        "post_event_strategy": "N/A",
+        "timing_state": "T0_clear",
+        "timing_passed": True,
+        "counter_thesis_1": "PC/Gaming板塊整體弱勢(C級47分)，CRSR可能只是短線反彈而非趨勢反轉",
+        "counter_thesis_2": "小型股IWM偏弱，系統性風險可能拖累CRSR即使個股邏輯成立",
+        "counter_thesis_3": "成交量可能不足以支撐有效突破8.20，動能在8.00附近衰竭",
+        "fail_condition_1": "跌破7.20 + 成交量放大 = 波段結構失效，全部退出",
+        "fail_condition_2": "10個交易日內無法有效突破8.00 = 動能衰竭，減倉50%",
+        "fail_condition_3": "IWM跌破關鍵支撐 = 小型股系統性風險升高，降低所有小票倉位",
+        "postmortem_7d": "2026-05-16",
+        "postmortem_30d": "2026-06-09",
+        "postmortem_90d": "2026-08-09",
+    })
+
+    # HOLDING CURRENT
+    db.save_holding_current({
+        "ticker": "CRSR", "status": "active", "shares": 120,
+        "avg_cost": 7.73, "current_price": 7.88, "position_value": 945.6,
+        "pnl_pct": 1.94, "pnl_amount": 18.0,
+        "linked_rec_id": None, "linked_score_id": "SCORE-20260509-CRSR-001",
+        "original_buy_reason": "S1-B/S2池交叉確認，PC/Gaming輪動初期反轉",
+        "entry_date": "2026-05-09", "holding_days": 1,
+        "stop_loss": 7.00, "alert_price": 7.50, "invalidation_price": 7.00,
+        "target_1": 8.20, "target_2": 9.00,
+        "can_add": "conditional", "add_condition": "已盈利+回踩10EMA成功+量縮",
+        "trailing_stop": "+5%保本",
+        "original_thesis_valid": True, "next_action": "hold",
+        "sector": "Consumer Electronics / PC / Gaming",
+        "momentum_state": "S1",
+        "notes": "不追高；守7.85-8.00；突破8.20才升級為正式REC",
+    })
+
+    # ─── MIST: Complete chain ─────────────────────────────────────────────
+    # TIMING (event lockout)
+    db.save_timing_gate(TimingGateEntry(
+        ticker="MIST", date=date(2026, 5, 10),
+        timing_state=TimingState.T4_EVENT_LOCKOUT,
+        earnings_date="2026-05-13", days_to_earnings=3,
+        timing_passed=False, timing_action="block",
+        notes="距財報/事件3天，禁止追買，持有不加碼。事件後判斷利多是否出盡。",
+    ))
+
+    # EXIT PLAN (event-driven)
+    db.save_exit_plan(ExitPlanEntry(
+        ticker="MIST", date=date(2026, 5, 10), rec_id=None,
+        entry_price=None, stop_loss=None,
+        trailing_stop_rule="事件後確認方向再設定移動停損",
+        target_1=None, target_2=None,
+        remainder_rule="事件後確認方向再設",
+        time_stop_days=3,
+        catalyst_fail_rule="05-13事件後3天內無正面股價反應=催化失效，快速全部退出",
+        structure_break_rule="財報後跌破前低=結構失效，不論原因立即退出",
+        profit_lock_rules="事件後若跳空上漲>15%，第一天出1/3鎖定利潤",
+        notes="二元事件：等結果，不預判方向",
+    ))
+
+    # HOLDING CURRENT
+    db.save_holding_current({
+        "ticker": "MIST", "status": "active",
+        "shares": None, "avg_cost": None, "current_price": None,
+        "linked_score_id": None, "linked_rec_id": None,
+        "original_buy_reason": "TRx爆發性成長(1月682→4月15876)+FDA/財報事件催化",
+        "entry_date": None, "holding_days": None,
+        "stop_loss": None, "alert_price": None, "invalidation_price": None,
+        "target_1": None, "target_2": None,
+        "can_add": "no", "add_condition": "05-13事件後確認數據一致性才可決定",
+        "trailing_stop": "事件後設定",
+        "original_thesis_valid": True, "next_action": "hold",
+        "sector": "Biotech / Healthcare Events",
+        "momentum_state": "S1",
+        "notes": "事件持倉；TRx數據正面但Q1 revenue口徑有矛盾；05-13前不加碼不減碼；等官方確認",
+    })
