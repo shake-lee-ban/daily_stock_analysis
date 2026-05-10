@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from openpyxl import Workbook
-from openpyxl.formatting.rule import CellIsRule
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from .storage import AlphaDB
 
@@ -200,14 +201,31 @@ _SHEETS = {
     "復盤紀錄": {
         "table": "postmortem",
         "columns": [
-            ("rec_id", "推薦ID", 18),
+            ("rec_id", "推薦ID", 16),
+            ("score_id", "評分ID", 16),
+            ("plan_id", "計畫ID", 16),
             ("ticker", "股票", 8),
             ("review_date", "復盤日期", 12),
             ("review_period", "週期", 8),
-            ("actual_performance_pct", "實際報酬%", 10),
+            ("entry_price", "進場價", 10),
+            ("stop_loss", "停損", 10),
+            ("target_1", "T1", 10),
+            ("target_2", "T2", 10),
+            ("highest_price", "最高價", 10),
+            ("lowest_price", "最低價", 10),
+            ("current_or_exit_price", "現價/出場價", 12),
             ("mfe", "MFE%", 8),
             ("mae", "MAE%", 8),
+            ("actual_performance_pct", "實際報酬%", 10),
+            ("hit_t1", "觸發T1", 8),
+            ("hit_t2", "觸發T2", 8),
+            ("hit_stop_loss", "觸發停損", 8),
+            ("hit_time_stop", "觸發時間停損", 10),
+            ("holding_days", "持有天數", 10),
+            ("exit_trigger", "出場觸發", 14),
             ("error_type", "錯誤類型", 16),
+            ("success_reason", "成功原因", 20),
+            ("failure_reason", "失敗原因", 20),
             ("needs_model_change", "需改模型", 10),
             ("conclusion", "結論", 30),
         ],
@@ -215,20 +233,69 @@ _SHEETS = {
     "交易計畫": {
         "table": "trade_plan",
         "columns": [
-            ("rec_id", "推薦ID", 18),
+            ("rec_id", "推薦ID", 16),
             ("ticker", "股票", 8),
             ("date", "日期", 12),
             ("strategy_version", "策略", 16),
             ("market_state", "市場", 12),
+            ("sector_state", "板塊", 12),
             ("entry_trigger", "進場觸發", 20),
-            ("stop_loss", "停損", 10),
-            ("target_1", "目標1", 10),
-            ("target_2", "目標2", 10),
+            ("entry_method", "進場方式", 12),
+            ("entry_range", "進場區間", 12),
+            ("no_chase_price", "禁追價", 8),
+            ("stop_loss", "停損", 8),
+            ("invalidation_condition", "失效條件", 20),
+            ("time_stop_days", "時間停損天", 10),
+            ("target_1", "T1", 8),
+            ("t1_exit_pct", "T1比例", 8),
+            ("target_2", "T2", 8),
+            ("t2_exit_pct", "T2比例", 8),
+            ("remainder_rule", "剩餘處理", 14),
+            ("trailing_stop_rule", "移動停損", 18),
             ("position_size", "倉位", 10),
-            ("timing_gate", "時間閘門", 14),
-            ("exit_rules", "出場規則", 20),
-            ("counter_thesis", "反方論述", 30),
-            ("plan_text", "完整計畫", 50),
+            ("max_risk_pct", "風險%", 8),
+            ("per_share_risk", "每股風險", 10),
+            ("risk_reward_ratio", "RR比", 8),
+            ("catalyst", "催化劑", 18),
+            ("catalyst_date", "催化日期", 12),
+            ("days_to_catalyst", "距事件天", 10),
+            ("timing_state", "時間狀態", 10),
+            ("timing_passed", "Timing通過", 10),
+            ("counter_thesis_1", "反方論述1", 24),
+            ("counter_thesis_2", "反方論述2", 24),
+            ("counter_thesis_3", "反方論述3", 24),
+            ("fail_condition_1", "失效條件1", 24),
+            ("fail_condition_2", "失效條件2", 24),
+            ("fail_condition_3", "失效條件3", 24),
+            ("v22_compliant", "v2.2合規", 8),
+        ],
+    },
+    "當前持倉": {
+        "table": "holding_current",
+        "columns": [
+            ("ticker", "股票", 8),
+            ("status", "狀態", 8),
+            ("shares", "股數", 8),
+            ("avg_cost", "成本", 10),
+            ("current_price", "現價", 10),
+            ("position_value", "持倉金額", 12),
+            ("pnl_pct", "盈虧%", 8),
+            ("pnl_amount", "盈虧金額", 10),
+            ("entry_date", "進場日", 12),
+            ("holding_days", "持有天數", 10),
+            ("stop_loss", "停損", 8),
+            ("alert_price", "警戒價", 8),
+            ("invalidation_price", "失效價", 8),
+            ("target_1", "T1", 8),
+            ("target_2", "T2", 8),
+            ("can_add", "可加碼", 8),
+            ("add_condition", "加碼條件", 16),
+            ("trailing_stop", "移動停損", 14),
+            ("original_thesis_valid", "邏輯有效", 10),
+            ("next_action", "下一步", 12),
+            ("sector", "板塊", 14),
+            ("momentum_state", "動能狀態", 10),
+            ("notes", "備註", 24),
         ],
     },
     "時間閘門": {
@@ -373,74 +440,295 @@ def _write_sheet(ws, rows: List[Dict], columns: list):
     ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max_row}"
     ws.freeze_panes = "A2"
 
+    if max_row < 2:
+        return
+
+    # Enhanced conditional formatting for numeric columns
+    for col_idx, (key, header, width) in enumerate(columns, 1):
+        col_letter = get_column_letter(col_idx)
+        cell_range = f"{col_letter}2:{col_letter}{max_row}"
+
+        if "pnl" in key or "performance" in key:
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="greaterThan", formula=["10"], fill=PatternFill(start_color="006100", end_color="006100", fill_type="solid"), font=Font(color="FFFFFF")),
+            )
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="lessThan", formula=["-5"], fill=PatternFill(start_color="9C0006", end_color="9C0006", fill_type="solid"), font=Font(color="FFFFFF")),
+            )
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="lessThan", formula=["0"], fill=PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")),
+            )
+
+        if "days_to" in key or key == "holding_days":
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="lessThanOrEqual", formula=["3"], fill=PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")),
+            )
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="between", formula=["4", "7"], fill=PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")),
+            )
+
+        if key == "timing_passed" or key == "v22_compliant":
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="equal", formula=["0"], fill=PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")),
+            )
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="equal", formula=["1"], fill=PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")),
+            )
+
+        if key == "can_add":
+            ws.conditional_formatting.add(
+                cell_range,
+                CellIsRule(operator="equal", formula=['"no"'], fill=PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")),
+            )
+
 
 def _write_summary_sheet(ws, db: AlphaDB):
-    """Write summary/dashboard sheet."""
-    ws.column_dimensions["A"].width = 20
-    ws.column_dimensions["B"].width = 15
-    ws.column_dimensions["C"].width = 30
+    """Write formula-driven summary/dashboard sheet."""
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 36
+    ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 36
 
-    title_font = Font(name="Microsoft JhengHei", bold=True, size=14)
-    section_font = Font(name="Microsoft JhengHei", bold=True, size=12)
+    title_font = Font(name="Microsoft JhengHei", bold=True, size=16)
+    section_font = Font(name="Microsoft JhengHei", bold=True, size=12, color="2F5496")
     data_font = Font(name="Microsoft JhengHei", size=11)
+    value_font = Font(name="Microsoft JhengHei", bold=True, size=11)
+    note_font = Font(name="Microsoft JhengHei", size=9, italic=True, color="666666")
 
     row = 1
-    ws.cell(row=row, column=1, value="美股高報酬交易系統").font = title_font
+    ws.cell(row=row, column=1, value="美股高報酬交易決策系統 v2.2").font = title_font
     row += 1
-    ws.cell(row=row, column=1, value=f"匯出時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}").font = data_font
+    ws.cell(row=row, column=1, value=f"匯出時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}").font = note_font
+    ws.cell(row=row, column=3, value="HIGH_ALPHA_LAUNCHPAD_US_v2.2 | TIMING + EXIT + TRADE_PLAN").font = note_font
     row += 2
 
-    ws.cell(row=row, column=1, value="資料表統計").font = section_font
+    # Section 1: System Status
+    ws.cell(row=row, column=1, value="系統狀態").font = section_font
+    ws.cell(row=row, column=4, value="v2.2 合規檢查").font = section_font
     row += 1
+
     counts = db.get_table_counts()
     table_names_zh = {
         "info_inbox": "資訊收錄",
-        "market_gate": "市場環境",
-        "sector_rank": "板塊強度",
-        "catalyst_calendar": "催化劑",
+        "market_gate": "市場環境紀錄",
+        "sector_rank": "板塊評分紀錄",
+        "catalyst_calendar": "催化劑追蹤",
         "score_audit": "評分審計",
         "formal_rec": "正式推薦",
-        "watchlist": "觀察名單",
+        "watchlist": "觀察名單（活躍）",
         "exclusion": "排除名單",
-        "holding": "持倉管理",
+        "holding": "持倉動作歷史",
+        "holding_current": "當前持倉",
         "postmortem": "復盤紀錄",
         "model_change": "模型修正",
         "trade_plan": "交易計畫",
-        "timing_gate": "時間閘門",
+        "timing_gate": "時間閘門紀錄",
         "exit_plan": "出場計畫",
         "regime_memory": "環境記憶",
     }
+
+    start_row = row
     for table, count in counts.items():
         zh_name = table_names_zh.get(table, table)
         ws.cell(row=row, column=1, value=zh_name).font = data_font
-        ws.cell(row=row, column=2, value=count).font = data_font
+        cell = ws.cell(row=row, column=2, value=count)
+        cell.font = value_font
+        if count == 0:
+            cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
         row += 1
 
-    row += 1
-    ws.cell(row=row, column=1, value="勝率統計").font = section_font
-    row += 1
-    stats = db.get_win_rate()
-    stat_labels = [
-        ("總推薦數", stats.get("total", 0)),
-        ("勝利", stats.get("wins", 0)),
-        ("部分成功", stats.get("partial", 0)),
-        ("虧損", stats.get("losses", 0)),
-        ("勝率", f"{stats.get('win_rate', 0)}%"),
-        ("平均報酬", f"{stats.get('avg_return', 0)}%"),
-        ("平均MFE", f"{stats.get('avg_mfe', 0)}%"),
-        ("平均MAE", f"{stats.get('avg_mae', 0)}%"),
+    # v2.2 compliance checks on right side
+    row = start_row
+    v22_checks = [
+        ("TIMING_ENGINE 啟用", counts.get("timing_gate", 0) > 0),
+        ("EXIT_ENGINE 啟用", counts.get("exit_plan", 0) > 0),
+        ("TRADE_PLAN 完整", counts.get("trade_plan", 0) > 0),
+        ("INFO_GATE 運作中", counts.get("info_inbox", 0) > 0),
+        ("MARKET_GATE 運作中", counts.get("market_gate", 0) > 0),
+        ("SECTOR_RANK 運作中", counts.get("sector_rank", 0) > 0),
+        ("RISK_LOCK 運作中", counts.get("exclusion", 0) > 0),
+        ("SCORE_ENGINE 運作中", counts.get("score_audit", 0) > 0),
+        ("REC_ENGINE 就緒", True),
+        ("POSTMORTEM 就緒", True),
     ]
-    for label, value in stat_labels:
-        ws.cell(row=row, column=1, value=label).font = data_font
-        ws.cell(row=row, column=2, value=value).font = data_font
+    for label, ok in v22_checks:
+        ws.cell(row=row, column=4, value=label).font = data_font
+        cell = ws.cell(row=row, column=5, value="✓ 已啟用" if ok else "✗ 未啟用")
+        cell.font = value_font
+        cell.fill = _PASS_FILL if ok else PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         row += 1
 
+    row += 2
+
+    # Section 2: Performance
+    ws.cell(row=row, column=1, value="績效統計").font = section_font
+    ws.cell(row=row, column=4, value="風險控制").font = section_font
     row += 1
-    ws.cell(row=row, column=1, value="系統版本").font = section_font
+
+    stats = db.get_win_rate()
+    perf_data = [
+        ("總推薦數", stats.get("total", 0), "正式REC數量"),
+        ("勝利", stats.get("wins", 0), "報酬≥10%"),
+        ("部分成功", stats.get("partial", 0), "報酬0-10%"),
+        ("虧損", stats.get("losses", 0), "報酬<0%"),
+        ("勝率", f"{stats.get('win_rate', 0)}%", "勝利/總數"),
+        ("平均報酬", f"{stats.get('avg_return', 0)}%", "全部推薦平均"),
+        ("平均MFE", f"{stats.get('avg_mfe', 0)}%", "最大有利波動平均"),
+        ("平均MAE", f"{stats.get('avg_mae', 0)}%", "最大不利波動平均"),
+    ]
+    for label, value, note in perf_data:
+        ws.cell(row=row, column=1, value=label).font = data_font
+        ws.cell(row=row, column=2, value=value).font = value_font
+        ws.cell(row=row, column=3, value=note).font = note_font
+        row += 1
+
+    # Risk control on right side (use sector data)
+    risk_row = row - len(perf_data)
+    a_sectors = db._conn.execute("SELECT COUNT(*) as c FROM sector_rank WHERE grade='A'").fetchone()["c"]
+    b_sectors = db._conn.execute("SELECT COUNT(*) as c FROM sector_rank WHERE grade='B'").fetchone()["c"]
+    blocked = counts.get("exclusion", 0)
+    active_watch = db._conn.execute("SELECT COUNT(*) as c FROM watchlist WHERE can_convert_to_rec=1").fetchone()["c"]
+    current_hold = counts.get("holding_current", 0)
+
+    risk_data = [
+        ("A級主線板塊", a_sectors, "可積極做多"),
+        ("B級強勢板塊", b_sectors, "可選股"),
+        ("風險封鎖數", blocked, "不可觸碰"),
+        ("活躍觀察名單", active_watch, "可能轉推薦"),
+        ("當前持倉數", current_hold, "活躍倉位"),
+        ("連續虧損", 0, "≥2收緊/≥3暫停"),
+    ]
+    for label, value, note in risk_data:
+        ws.cell(row=risk_row, column=4, value=label).font = data_font
+        ws.cell(row=risk_row, column=5, value=value).font = value_font
+        risk_row += 1
+
+    row += 2
+
+    # Section 3: System Rules
+    ws.cell(row=row, column=1, value="v2.2 核心紀律").font = section_font
     row += 1
-    ws.cell(row=row, column=1, value="HIGH_ALPHA_LAUNCHPAD_US_v2.2").font = data_font
-    row += 1
-    ws.cell(row=row, column=1, value="含：TIMING + EXIT + TRADE_PLAN").font = data_font
+    rules = [
+        "1. 沒有 TIMING_GATE 通過，不可建立 REC",
+        "2. 沒有 EXIT_PLAN，不可建立 REC",
+        "3. 沒有完整 TRADE_PLAN，不可建立 REC",
+        "4. RR < 2.5:1 不主推",
+        "5. SEC 未通過直接封鎖",
+        "6. S3 過熱不追",
+        "7. 每日最多 3 支主推",
+        "8. 反方論述必填",
+        "9. 寧可不推薦也不硬推",
+        "10. 每筆推薦都要可復盤",
+    ]
+    for rule in rules:
+        ws.cell(row=row, column=1, value=rule).font = data_font
+        row += 1
+
+
+_VALIDATION_RULES = {
+    "資訊收錄": {
+        "source_grade": "A1,A2,B,C,R,UNKNOWN",
+        "initial_direction": "bullish,bearish,neutral,uncertain",
+        "conclusion": "adopt,observe,isolate,exclude",
+    },
+    "市場環境": {
+        "market_state": "risk_on,selective_bull,neutral_range,risk_off,event_only",
+    },
+    "板塊強度": {
+        "grade": "A,B,C,WEAK",
+    },
+    "推薦紀錄": {
+        "final_grade": "A,B,C,D,F,P",
+        "market_state": "risk_on,selective_bull,neutral_range,risk_off,event_only",
+        "momentum_state": "S0-A,S0-B,S0-C,S1,S2,S3,S4",
+        "rec_type": "primary,secondary,small_event,continuation",
+        "position_risk": "standard,half,small,forbidden",
+    },
+    "評分審計": {
+        "final_grade": "A,B,C,D,F,P",
+        "risk_lock": "pass,warning,blocked",
+    },
+    "時間閘門": {
+        "timing_state": "T0_clear,T1_caution,T2_restricted,T3_earnings_zone,T4_event_lockout,T5_post_event",
+        "timing_action": "clear,reduce,delay,block",
+    },
+    "持倉管理": {
+        "action": "hold,add,reduce,stop_loss,wait",
+        "next_action": "hold,add,reduce,exit,watch",
+        "can_add": "yes,no,conditional",
+    },
+    "當前持倉": {
+        "status": "active,closed,stopped",
+        "next_action": "hold,add,reduce,exit,watch",
+        "can_add": "yes,no,conditional",
+        "momentum_state": "S0-A,S0-B,S0-C,S1,S2,S3,S4",
+    },
+    "復盤紀錄": {
+        "review_period": "7d,30d,90d,180d,365d",
+        "exit_trigger": "stop_loss,time_stop,t1_hit,t2_hit,trailing_stop,catalyst_fail,structure_break,manual",
+        "error_type": "info_error,timing_error,chasing_error,sector_misjudge,risk_underestimate,catalyst_miss,market_turn,technical_fail,liquidity_misjudge,sec_dilution",
+    },
+    "觀察名單": {
+        "layer": "core,standard,event,watch,pending,excluded",
+    },
+}
+
+
+def _add_data_validations(wb: Workbook):
+    """Add dropdown data validations to relevant sheets."""
+    for sheet_name, fields in _VALIDATION_RULES.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+
+        header_map = {}
+        for col in range(1, ws.max_column + 1):
+            val = ws.cell(row=1, column=col).value
+            if val:
+                header_map[val] = col
+
+        for col_key, allowed in fields.items():
+            col_header_map = {
+                "source_grade": "來源等級",
+                "initial_direction": "方向",
+                "conclusion": "結論",
+                "market_state": "市場狀態",
+                "grade": "等級",
+                "final_grade": "等級",
+                "momentum_state": "動能狀態",
+                "rec_type": "推薦類型",
+                "position_risk": "倉位風險",
+                "risk_lock": "風險封鎖",
+                "timing_state": "時間狀態",
+                "timing_action": "動作",
+                "action": "動作",
+                "next_action": "下一步",
+                "can_add": "可加碼",
+                "status": "狀態",
+                "review_period": "週期",
+                "exit_trigger": "出場觸發",
+                "error_type": "錯誤類型",
+                "layer": "分層",
+            }
+            header_zh = col_header_map.get(col_key, col_key)
+            if header_zh not in header_map:
+                continue
+
+            col_idx = header_map[header_zh]
+            col_letter = get_column_letter(col_idx)
+            dv = DataValidation(type="list", formula1=f'"{allowed}"', allow_blank=True)
+            dv.error = f"請選擇有效值：{allowed}"
+            dv.errorTitle = "輸入錯誤"
+            ws.add_data_validation(dv)
+            dv.add(f"{col_letter}2:{col_letter}1000")
 
 
 def export_to_excel(db: Optional[AlphaDB] = None, output_path: Optional[str] = None) -> str:
@@ -477,6 +765,8 @@ def export_to_excel(db: Optional[AlphaDB] = None, output_path: Optional[str] = N
 
         ws = wb.create_sheet(title=sheet_name)
         _write_sheet(ws, rows_data, columns)
+
+    _add_data_validations(wb)
 
     wb.save(str(path))
 

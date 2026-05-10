@@ -216,6 +216,37 @@ CREATE TABLE IF NOT EXISTS holding (
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS holding_current (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT UNIQUE NOT NULL,
+    status TEXT DEFAULT 'active',
+    shares INTEGER,
+    avg_cost REAL,
+    current_price REAL,
+    position_value REAL,
+    pnl_pct REAL,
+    pnl_amount REAL,
+    linked_rec_id TEXT,
+    linked_score_id TEXT,
+    original_buy_reason TEXT,
+    entry_date TEXT,
+    holding_days INTEGER,
+    stop_loss REAL,
+    alert_price REAL,
+    invalidation_price REAL,
+    target_1 REAL,
+    target_2 REAL,
+    can_add TEXT,
+    add_condition TEXT,
+    trailing_stop TEXT,
+    original_thesis_valid INTEGER DEFAULT 1,
+    next_action TEXT,
+    sector TEXT,
+    momentum_state TEXT,
+    notes TEXT,
+    last_updated TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS timing_gate (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -264,14 +295,36 @@ CREATE TABLE IF NOT EXISTS exit_plan (
 CREATE TABLE IF NOT EXISTS postmortem (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rec_id TEXT NOT NULL,
+    score_id TEXT,
+    plan_id TEXT,
     ticker TEXT NOT NULL,
     review_date TEXT NOT NULL,
     review_period TEXT NOT NULL,
-    actual_performance_pct REAL,
+    -- Price data
+    entry_price REAL,
+    stop_loss REAL,
+    target_1 REAL,
+    target_2 REAL,
+    highest_price REAL,
+    lowest_price REAL,
+    current_or_exit_price REAL,
+    -- MFE / MAE
     mfe REAL,
     mae REAL,
+    actual_performance_pct REAL,
+    -- Trigger checks
+    hit_t1 INTEGER DEFAULT 0,
+    hit_t2 INTEGER DEFAULT 0,
+    hit_stop_loss INTEGER DEFAULT 0,
+    hit_time_stop INTEGER DEFAULT 0,
+    holding_days INTEGER,
+    -- Classification
+    exit_trigger TEXT,
     error_type TEXT,
+    success_reason TEXT,
+    failure_reason TEXT,
     needs_model_change INTEGER DEFAULT 0,
+    model_change_id TEXT,
     conclusion TEXT,
     full_json TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
@@ -293,17 +346,56 @@ CREATE TABLE IF NOT EXISTS trade_plan (
     rec_id TEXT,
     ticker TEXT NOT NULL,
     date TEXT NOT NULL,
-    plan_text TEXT NOT NULL,
     strategy_version TEXT,
+    rec_type TEXT,
     market_state TEXT,
+    sector_state TEXT,
+    -- Entry
     entry_trigger TEXT,
+    entry_method TEXT,
+    entry_range TEXT,
+    no_chase_price REAL,
+    -- Exit
     stop_loss REAL,
+    invalidation_condition TEXT,
+    time_stop_days INTEGER,
     target_1 REAL,
+    t1_exit_pct TEXT DEFAULT '1/3',
     target_2 REAL,
+    t2_exit_pct TEXT DEFAULT '1/3',
+    remainder_rule TEXT,
+    trailing_stop_rule TEXT,
+    -- Position
     position_size TEXT,
-    timing_gate TEXT,
-    exit_rules TEXT,
-    counter_thesis TEXT,
+    max_risk_pct REAL,
+    per_share_risk REAL,
+    risk_reward_ratio REAL,
+    -- Catalyst & Timing
+    catalyst TEXT,
+    catalyst_date TEXT,
+    days_to_catalyst INTEGER,
+    pre_event_strategy TEXT,
+    post_event_strategy TEXT,
+    timing_state TEXT,
+    timing_passed INTEGER,
+    -- Counter thesis
+    counter_thesis_1 TEXT,
+    counter_thesis_2 TEXT,
+    counter_thesis_3 TEXT,
+    fail_condition_1 TEXT,
+    fail_condition_2 TEXT,
+    fail_condition_3 TEXT,
+    -- v2.2 compliance
+    has_timing_gate INTEGER DEFAULT 0,
+    has_exit_plan INTEGER DEFAULT 0,
+    has_trade_plan INTEGER DEFAULT 0,
+    v22_compliant INTEGER DEFAULT 0,
+    -- Postmortem
+    postmortem_7d TEXT,
+    postmortem_30d TEXT,
+    postmortem_90d TEXT,
+    -- Full
+    plan_text TEXT,
     full_json TEXT,
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
@@ -707,44 +799,72 @@ class AlphaDB:
         self._conn.commit()
         return cur.lastrowid
 
-    def save_trade_plan(
-        self,
-        ticker: str,
-        plan_text: str,
-        rec_id: Optional[str] = None,
-        strategy_version: Optional[str] = None,
-        market_state: Optional[str] = None,
-        entry_trigger: Optional[str] = None,
-        stop_loss: Optional[float] = None,
-        target_1: Optional[float] = None,
-        target_2: Optional[float] = None,
-        position_size: Optional[str] = None,
-        timing_gate: Optional[str] = None,
-        exit_rules: Optional[str] = None,
-        counter_thesis: Optional[str] = None,
-    ) -> int:
-        """Save a TRADE_PLAN (v2.2)."""
+    def save_trade_plan(self, ticker: str, plan_data: Dict) -> int:
+        """Save a full v2.2 TRADE_PLAN."""
+        d = plan_data
+        has_timing = bool(d.get("timing_passed"))
+        has_exit = bool(d.get("stop_loss") and d.get("target_1"))
+        has_plan = bool(d.get("entry_trigger") and d.get("stop_loss"))
+        v22 = has_timing and has_exit and has_plan
+
         cur = self._conn.execute(
             """INSERT INTO trade_plan
-            (rec_id, ticker, date, plan_text, strategy_version, market_state,
-             entry_trigger, stop_loss, target_1, target_2, position_size,
-             timing_gate, exit_rules, counter_thesis)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (rec_id, ticker, date, strategy_version, rec_type, market_state, sector_state,
+             entry_trigger, entry_method, entry_range, no_chase_price,
+             stop_loss, invalidation_condition, time_stop_days,
+             target_1, t1_exit_pct, target_2, t2_exit_pct, remainder_rule, trailing_stop_rule,
+             position_size, max_risk_pct, per_share_risk, risk_reward_ratio,
+             catalyst, catalyst_date, days_to_catalyst, pre_event_strategy, post_event_strategy,
+             timing_state, timing_passed,
+             counter_thesis_1, counter_thesis_2, counter_thesis_3,
+             fail_condition_1, fail_condition_2, fail_condition_3,
+             has_timing_gate, has_exit_plan, has_trade_plan, v22_compliant,
+             postmortem_7d, postmortem_30d, postmortem_90d, plan_text)
+            VALUES (?,?,?,?,?,?,?, ?,?,?,?, ?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?, ?,?,?, ?,?,?,?, ?,?,?, ?)""",
             (
-                rec_id,
-                ticker,
-                str(date.today()),
-                plan_text,
-                strategy_version,
-                market_state,
-                entry_trigger,
-                stop_loss,
-                target_1,
-                target_2,
-                position_size,
-                timing_gate,
-                exit_rules,
-                counter_thesis,
+                d.get("rec_id"), ticker, str(date.today()),
+                d.get("strategy_version"), d.get("rec_type"), d.get("market_state"), d.get("sector_state"),
+                d.get("entry_trigger"), d.get("entry_method"), d.get("entry_range"), d.get("no_chase_price"),
+                d.get("stop_loss"), d.get("invalidation_condition"), d.get("time_stop_days"),
+                d.get("target_1"), d.get("t1_exit_pct", "1/3"), d.get("target_2"), d.get("t2_exit_pct", "1/3"),
+                d.get("remainder_rule"), d.get("trailing_stop_rule"),
+                d.get("position_size"), d.get("max_risk_pct"), d.get("per_share_risk"), d.get("risk_reward_ratio"),
+                d.get("catalyst"), d.get("catalyst_date"), d.get("days_to_catalyst"),
+                d.get("pre_event_strategy"), d.get("post_event_strategy"),
+                d.get("timing_state"), 1 if has_timing else 0,
+                d.get("counter_thesis_1"), d.get("counter_thesis_2"), d.get("counter_thesis_3"),
+                d.get("fail_condition_1"), d.get("fail_condition_2"), d.get("fail_condition_3"),
+                1 if has_timing else 0, 1 if has_exit else 0, 1 if has_plan else 0, 1 if v22 else 0,
+                d.get("postmortem_7d"), d.get("postmortem_30d"), d.get("postmortem_90d"),
+                d.get("plan_text"),
+            ),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def save_holding_current(self, data: Dict) -> int:
+        """Upsert a HOLDING_CURRENT snapshot (one row per ticker)."""
+        cur = self._conn.execute(
+            """INSERT OR REPLACE INTO holding_current
+            (ticker, status, shares, avg_cost, current_price, position_value,
+             pnl_pct, pnl_amount, linked_rec_id, linked_score_id,
+             original_buy_reason, entry_date, holding_days,
+             stop_loss, alert_price, invalidation_price, target_1, target_2,
+             can_add, add_condition, trailing_stop, original_thesis_valid,
+             next_action, sector, momentum_state, notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data["ticker"], data.get("status", "active"),
+                data.get("shares"), data.get("avg_cost"), data.get("current_price"),
+                data.get("position_value"), data.get("pnl_pct"), data.get("pnl_amount"),
+                data.get("linked_rec_id"), data.get("linked_score_id"),
+                data.get("original_buy_reason"), data.get("entry_date"), data.get("holding_days"),
+                data.get("stop_loss"), data.get("alert_price"), data.get("invalidation_price"),
+                data.get("target_1"), data.get("target_2"),
+                data.get("can_add"), data.get("add_condition"), data.get("trailing_stop"),
+                1 if data.get("original_thesis_valid", True) else 0,
+                data.get("next_action"), data.get("sector"), data.get("momentum_state"),
+                data.get("notes"),
             ),
         )
         self._conn.commit()
@@ -942,8 +1062,8 @@ class AlphaDB:
         tables = [
             "info_inbox", "market_gate", "sector_rank", "catalyst_calendar",
             "score_audit", "formal_rec", "watchlist", "exclusion",
-            "holding", "postmortem", "model_change", "trade_plan",
-            "timing_gate", "exit_plan", "regime_memory",
+            "holding", "holding_current", "postmortem", "model_change",
+            "trade_plan", "timing_gate", "exit_plan", "regime_memory",
         ]
         counts = {}
         for table in tables:
