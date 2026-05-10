@@ -84,3 +84,4 @@ static/
 *.db-wal
 *.db-shm
 us_alpha_db/
+output/
